@@ -54,7 +54,7 @@ if ($result === null) {
 // IPEKを出力
 echo "Valid IPEK: {$result['ipek']}\n";
 
-// MAC検証結果を出力（バージョンAのみ）
+// MAC検証結果を出力（検証可能バージョンのみ）
 if ($result['macVerified'] !== null) {
     echo "MAC Verification: " . ($result['macVerified'] ? "PASSED" : "FAILED") . " (Version {$result['version']})\n";
 } else {

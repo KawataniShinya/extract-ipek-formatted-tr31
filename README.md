@@ -110,7 +110,7 @@ php ExtractIPEKformattedTR31.php "./key/private_key.pem" password "LlgTff+W6B0f2
 
 ```bash
 cd tools/ExtractIPEKformattedTR31
-php ExtractIPEKformattedTR31.php "./key/private_key.pem" password "bhi7H2BHqIAa0hlPUiCqfpOozxkuvbh2CSOx1tCZV3j+TjQpaJf5kLa0EmoUcrqrZw2WFq2xIKmb0byYz0gr2bQCvTu6F7HQbPrVtvvKA7DSwDM7nglZCuypq9CJR+oV/yGu0U6BGXxiOS0+ekMJkbtgnoXn6QAhpBjvdMHWWAOMYf/z67VDedZShrvQDIlm7xEFiUykKysF76JBQMtfp6dQAa+TuaJQc9BIpgahq1pOAvqn5rzkduY/rnpwgYuktKaYg1vUZHyqxtNixM2In7ICdkzcUMrn0+MwNi3Qtg2Th1DVuTQAzD8ybaS/c4BMLwG7Tpusj6Wy7kLQ5UVuHQ==" RB0080B1TN00N000049E1F5AD028AC01B3DC89BE13E91198EA640BA387B1510B12AF31935
+php ExtractIPEKformattedTR31.php "./key/private_key.pem" password "Y3a/YaG1IXfoKqFmQrf9XVOxDAYNygEEEmzShKCmMrgPjF7TC8f6z1d9ohTtXOF3xYRYPNxRGun2J9t9bbqedzO2xSu6JyaBjHE1kHXSByoRkj5bLAW6JXy+nj+xRUEVCL+efeNanGk0GfmZMNj/8lAZ+F8ITw5CL1GhRN+q+BfujdFROtM1UlWoqlXsKYTe+k8t/v4goRkLsXGdRC/x+kZgNZzR/UNWmrH9Fe61nuVkMSI6fk0JoMQd9yD4LQa+VoiPtC+P5hFfWn+SRWM6mVqF5xwX2XuHplUXXlBZrsj67ivWm18OcueDnpy5CsYj7PnVlO4ysZKZ8uv5mW6xJg==" RB0080B1TN00N00005D94BB551567F53FD0937E7183971B9353DDFB880708383DE53735D2A1D246EA
 ```
 
 ## 想定結果
@@ -174,10 +174,65 @@ IPEK extraction failed.
 - **3DES (Triple DES)**: TR-31キーブロックの復号化に使用（CBCモード）
 - **TR-31標準**: ANSI X9.24-1に基づくキーブロック形式
 
-### キー導出方式
+### TR-31鍵ブロックのバージョンによる違い
+
+TR-31鍵ブロックには複数のバージョン（'A', 'B', 'D'など）があり、バージョンによって以下のロジックが異なります：
+
+#### バージョンA
+
+- **MAC長**: 4バイト
+- **IV（初期化ベクトル）**: ヘッダーの最初の8バイト
+- **KBEK/KBMK導出方式**: XORバリアント方式
+  - KBEK = KBPK XOR (0x45を繰り返し) を3DESキーに変換
+  - KBMK = KBPK XOR (0x4Dを繰り返し) を3DESキーに変換
+- **MAC検証方式**: CBC暗号化方式
+  - データ: `header + encryptedKey`
+  - 3DES-CBCで暗号化し、最後の8バイトから4バイト（MAC長）を取得
+
+#### バージョンB
+
+- **MAC長**: 8バイト
+- **IV（初期化ベクトル）**: MACの8バイト
+- **KBEK/KBMK導出方式**: TDES-CMAC KDF（Key Derivation Function）
+  - 固定入力8バイト × カウンタ2回 → 16バイト生成
+  - KBEK = `tdesCmac(KBPK, [0x01, 0, 0, 0, 0, 0, 0, 0x80]) + tdesCmac(KBPK, [0x02, 0, 0, 0, 0, 0, 0, 0x80])`
+  - KBMK = `tdesCmac(KBPK, [0x01, 0, 0x01, 0, 0, 0, 0, 0x80]) + tdesCmac(KBPK, [0x02, 0, 0x01, 0, 0, 0, 0, 0x80])`
+  - 各結果を連結して16バイトとし、3DESキーに変換
+- **MAC検証方式**: TDES-CMAC方式
+  - データ: `header + plainKeyBlock`（復号化された鍵ブロック全体）
+  - TDES-CMACで計算し、8バイトのMACを生成
+
+#### バージョンD
+
+- MAC検証はサポートされていません（検証不要）
+
+### キー導出方式（バージョン別）
+
+#### バージョンA: XORバリアント方式
 
 - **KBEK (Key Block Encryption Key)**: KBPK XOR 0x45（'E'）から導出
 - **KBMK (Key Block MAC Key)**: KBPK XOR 0x4D（'M'）から導出
+
+#### バージョンB: TDES-CMAC KDF方式
+
+- **KBEK (Key Block Encryption Key)**: TDES-CMAC KDFを使用
+  - カウンタ1: `tdesCmac(KBPK, [0x01, 0, 0, 0, 0, 0, 0, 0x80])` → 8バイト
+  - カウンタ2: `tdesCmac(KBPK, [0x02, 0, 0, 0, 0, 0, 0, 0x80])` → 8バイト
+  - 連結して16バイトとし、3DESキーに変換
+- **KBMK (Key Block MAC Key)**: TDES-CMAC KDFを使用
+  - カウンタ1: `tdesCmac(KBPK, [0x01, 0, 0x01, 0, 0, 0, 0, 0x80])` → 8バイト
+  - カウンタ2: `tdesCmac(KBPK, [0x02, 0, 0x01, 0, 0, 0, 0, 0x80])` → 8バイト
+  - 連結して16バイトとし、3DESキーに変換
+
+### TDES-CMACについて
+
+TDES-CMAC（Triple DES Cipher-based Message Authentication Code）は、バージョンBのKBEK/KBMK導出とMAC検証で使用される認証コード生成方式です。
+
+1. **Lの計算**: ゼロブロック（8バイト）をTDES-ECBで暗号化
+2. **サブキー生成**: LからK1、K1からK2を生成（1ビット左シフトと条件付きXOR）
+3. **メッセージ処理**: メッセージを8バイトブロック単位で処理
+4. **最終ブロック処理**: 最後のブロックにパディング（必要に応じて）とサブキーを適用
+5. **MAC生成**: 最終的なXOR結果をTDES-ECBで暗号化してMACを生成
 
 ## 注意事項
 
