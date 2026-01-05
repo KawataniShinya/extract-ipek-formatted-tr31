@@ -85,7 +85,7 @@ echo "LlgTff+W6B0f23pJr7ATABVM/anuv5bFfBFys1EFEhbtA0cserRHlrqmgeEnXmayPLgJ24TLyz
 ### コマンド形式
 
 ```bash
-php ExtractIPEKformattedTR31.php <rsaPrivateKeyPemPath> <passphrase> <encryptedTMKBase64> <tr31String>
+php ExtractIPEKformattedTR31.php <rsaPrivateKeyPemPath> <passphrase> <encryptedTMK> <tr31String> [format]
 ```
 
 ### パラメータ
@@ -94,28 +94,38 @@ php ExtractIPEKformattedTR31.php <rsaPrivateKeyPemPath> <passphrase> <encryptedT
 |-----------|------|-----|
 | `rsaPrivateKeyPemPath` | RSA秘密鍵のPEMファイルパス（相対パスまたは絶対パス） | `./key/private_key.pem` |
 | `passphrase` | 秘密鍵のパスフレーズ | `password` |
-| `encryptedTMKBase64` | RSA公開鍵で暗号化され、Base64エンコードされたTMK文字列 | `LlgTff+W6B0f...` |
+| `encryptedTMK` | RSA公開鍵で暗号化されたTMK文字列（Base64またはHEX形式） | `LlgTff+W6B0f...` (Base64) または `2e58137dff96e81d...` (HEX) |
 | `tr31String` | TR-31キーブロック文字列（先頭に"R"が付く形式） | `RA0072B1TN00S0000...` |
+| `format` | エンコード形式（オプショナル、デフォルト: `base64`） | `base64` または `hex` |
+
+> **注意**: `format`パラメータを指定しない場合、デフォルトで`base64`として処理されます。HEX形式のTMKを使用する場合は、`format`に`hex`を指定してください。
 
 ## コマンド例
 
-### 例1: バージョンAのTR-31キーブロック（MAC検証あり）
+### 例1: 暗号化TMKのパディングモードがSHA-1でBase64エンコードされており、TR-31キーブロックがバージョンAの場合。
 
 ```bash
 cd tools/ExtractIPEKformattedTR31
 php ExtractIPEKformattedTR31.php "./key/private_key.pem" password "LlgTff+W6B0f23pJr7ATABVM/anuv5bFfBFys1EFEhbtA0cserRHlrqmgeEnXmayPLgJ24TLyzMi1wituHx6Tl6in3HG8HJp64ZVaOe1pbKh44BnxtuD06qFGPSAGNE084DAPjQ2GnJMX0HUS2jwhs7YH44WZDOlcyUAywfCrEv6uKg5LKAuPTDTVgeKydVP+dD7Zq//lg/mUtjcvO+QgxfVBgS/Efs85kO56pbfvabXrlFxVF4rrt/8S6lLOzAU8cPpnlqBZ00ksA40+QCpoVWSFpFq9HjSqQgIYBgit+lEIhWAYsy+JIuDTitU/rhTVHOcFZu2ZMRXeLt1tWTdGQ==" RA0072B1TN00S00006D2F59B60F3BCCAC8A869370685F00EBF3AD3865414CFAAC77412898
 ```
 
-### 例2: バージョンBのTR-31キーブロック（MAC検証不要）
+### 例2: 暗号化TMKのパディングモードがSHA-1でBase64エンコードされており、TR-31キーブロックがバージョンBの場合。
 
 ```bash
 cd tools/ExtractIPEKformattedTR31
 php ExtractIPEKformattedTR31.php "./key/private_key.pem" password "Y3a/YaG1IXfoKqFmQrf9XVOxDAYNygEEEmzShKCmMrgPjF7TC8f6z1d9ohTtXOF3xYRYPNxRGun2J9t9bbqedzO2xSu6JyaBjHE1kHXSByoRkj5bLAW6JXy+nj+xRUEVCL+efeNanGk0GfmZMNj/8lAZ+F8ITw5CL1GhRN+q+BfujdFROtM1UlWoqlXsKYTe+k8t/v4goRkLsXGdRC/x+kZgNZzR/UNWmrH9Fe61nuVkMSI6fk0JoMQd9yD4LQa+VoiPtC+P5hFfWn+SRWM6mVqF5xwX2XuHplUXXlBZrsj67ivWm18OcueDnpy5CsYj7PnVlO4ysZKZ8uv5mW6xJg==" RB0080B1TN00N00005D94BB551567F53FD0937E7183971B9353DDFB880708383DE53735D2A1D246EA
 ```
 
+### 例3: 暗号化TMKのパディングモードがSHA-256でBase64エンコードされており、TR-31キーブロックがバージョンBの場合。(APCで生成した場合)
+
+```bash
+cd tools/ExtractIPEKformattedTR31
+php ExtractIPEKformattedTR31.php "./key/private_key_apc.pem" password "0b63226064b65428d960b178a1e8aeb435d055aaf8681149dc78518de522284726dec2916185f06e3e608780ed1d8d8fba266dd6e1245ec173d988071818bda894a21c90971d81b882e41b95b3e167de78784be2ae11fede9ebf1940a3f56f3af652d3b8536bfbcfce90d05ac95769cfe17cd7a5dbfdc6b2e102ed5a36b57c89b6a4e6ae52ec136d9c710078a4c61d8f3baa09be96e72d0c5fac57e53fc03ff6d14fd435aa49021e51b5df40dbbaee70fc80e563d1101d010c8936620a8936717b8315d5a227d81a3a2f5d42c74e5a1348b746664282f5773fee621e43f9b9b47fc515904bb305aa94ffea80b01f148cc89e1328e46c352b00cb2d9d90bb607a" B0096B1TX00S0000FAADEE5B7F5BDEA7788A9A15F76FB3B42AB8E59F7DF8E4C2327ECE108C5D0068B0B3A3EDFA4AA909 hex
+```
+
 ## 想定結果
 
-### バージョンAの正常終了時の出力（MAC検証あり）
+### バージョンA,Bの正常終了時の出力（MAC検証あり）
 
 ```
 === RESULT ===
@@ -124,19 +134,18 @@ Valid IPEK: 8b931e0e0b1e5dcfdc2d31e0f9ed0281
 MAC Verification: PASSED (Version A)
 ```
 
-### バージョンBの正常終了時の出力（MAC検証不要）
+### バージョンDの正常終了時の出力想定（MAC検証不要）
 
 ```
 === RESULT ===
-Decrypted TMK: 000080004a9b2feccd3ba7b0e34a194a7a9e8640 (leading 00008000 indicates default string-to-key parameters)
-Valid IPEK: f1d5812771552c5a349db7ff4d90ea7d979a0cbe863c
-MAC Verification: Not applicable (Version B)
+...
+MAC Verification: Not applicable (Version D)
 ```
 
 ### 出力の説明
 
 - **Decrypted TMK**: 復号化されたTMK（16進数文字列）
-  - 先頭の `00008000` はデフォルトのstring-to-keyパラメータを示します
+  - 先頭の `00008000` はデフォルトのstring-to-keyパラメータを示します。(ただしAPC出力のTMKには付加されていません。)
   - その後の部分（例: `62c776ba57576dfdd60146ea1fdaae6e`）がKBPKとして使用されます
 - **Valid IPEK**: 取得されたIPEK（16進数文字列）
   - MAC検証の結果に関係なく返却されます
