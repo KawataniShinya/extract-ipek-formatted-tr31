@@ -3,6 +3,8 @@
 require_once __DIR__ . '/src/TR31KeyBlock.php';
 require_once __DIR__ . '/src/RKIEncryptedParametersValidator.php';
 
+use ExtractIpekFormattedTR31\RKIEncryptedParametersValidator;
+
 // コマンドライン引数を取得
 if ($argc !== 5 && $argc !== 6) {
     echo "Usage: php ExtractIPEKformattedTR31.php <rsaPrivateKeyPemPath> <passphrase> <encryptedTMK> <tr31String> [format]\n";

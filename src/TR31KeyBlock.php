@@ -1,27 +1,114 @@
 <?php
 
-class TR31KeyBlock
+namespace ExtractIpekFormattedTR31;
+
+use Exception;
+use ExtractIpekFormattedTR31\TR31\TR31VersionA;
+use ExtractIpekFormattedTR31\TR31\TR31VersionB;
+use ExtractIpekFormattedTR31\TR31\TR31VersionC;
+use ExtractIpekFormattedTR31\TR31\TR31VersionD;
+use InvalidArgumentException;
+
+abstract class TR31KeyBlock
 {
-    private const MAC_LEN_A = 4; // バージョンAのMAC長（バイト）
-    private const MAC_LEN_B = 8; // バージョンBのMAC長（バイト）
     private const HEADER_LEN = 16;
     private const TRANSFORMATION = 'DES-EDE3-CBC';
 
-    private string $header;
-    private string $encryptedKey;
-    private string $mac;
-    private ?string $plainKey = null;
-    private ?string $plainKeyBlock = null; // 復号化された鍵ブロック全体（鍵長情報 + 鍵本体）
-    private string $version;
+    protected string $header;
+    protected string $encryptedKey;
+    protected string $mac;
+    protected ?string $plainKey = null;
+    protected ?string $plainKeyBlock = null;
 
-    private string $KBPK; // Key Block Public Key
-    private string $KBEK; // Key Block Encryption Key
-    private string $KBMK; // Key Block MAC Key
+    protected string $KBPK;
+    protected string $KBEK;
+    protected string $KBMK;
 
     /**
-     * Returns the plain key after decryption.
+     * キーブロック先頭のバージョン文字から適切な実装クラスを生成する。
      *
-     * @return string|null The decrypted plain key or null if decryption failed.
+     * @param string $keyBlock TR-31鍵ブロック文字列（先頭1文字がバージョン）。
+     *
+     * @return self|null 対応するバージョン実装。未対応・不正形式の場合はnull。
+     */
+    public static function createFromKeyBlock(string $keyBlock): ?self
+    {
+        if ($keyBlock === '' || !preg_match('/^[ABCD]/', $keyBlock)) {
+            return null;
+        }
+
+        require_once __DIR__ . '/TR31/TR31VersionA.php';
+        require_once __DIR__ . '/TR31/TR31VersionB.php';
+        require_once __DIR__ . '/TR31/TR31VersionC.php';
+        require_once __DIR__ . '/TR31/TR31VersionD.php';
+
+        return match ($keyBlock[0]) {
+            'A' => new TR31VersionA(),
+            'B' => new TR31VersionB(),
+            'C' => new TR31VersionC(),
+            'D' => new TR31VersionD(),
+            default => null,
+        };
+    }
+
+    /**
+     * この実装クラスが扱うTR-31バージョン文字を返す。
+     *
+     * @return string バージョン文字（例: A/B/C/D）。
+     */
+    abstract public function getVersion(): string;
+
+    /**
+     * 当該バージョンで使用するMAC長（バイト数）を返す。
+     *
+     * @return int MAC長（バイト）。
+     */
+    abstract protected function getMacLen(): int;
+
+    /**
+     * 当該バージョン実装が利用可能かどうかを返す。
+     *
+     * @return bool true: 実装済み / false: 未実装。
+     */
+    abstract protected function isImplemented(): bool;
+
+    /**
+     * 当該バージョンでMAC検証を行うかどうかを返す。
+     *
+     * @return bool true: 検証する / false: 検証しない。
+     */
+    abstract protected function supportsMacVerification(): bool;
+
+    /**
+     * バージョン仕様に従ってKBEK/KBMKを導出する。
+     *
+     * @param string $kbpk 3DES長に整形済みのKBPKバイナリ。
+     *
+     * @return array{string,string} [KBEK, KBMK]
+     */
+    abstract protected function deriveKeysByVersion(string $kbpk): array;
+
+    /**
+     * バージョン仕様に従って復号時IVを算出する。
+     *
+     * @param string $header TR-31ヘッダ（バイナリ）。
+     * @param string $mac 鍵ブロック末尾のMAC（バイナリ）。
+     *
+     * @return string 復号に使用するIV（8バイト）。
+     */
+    abstract protected function getDecryptIvByVersion(string $header, string $mac): string;
+
+    /**
+     * バージョン仕様に従ってMACを計算する。
+     *
+     * @return string|null 計算したMAC。計算不可時はnull。
+     */
+    abstract protected function calculateMacByVersion(): ?string;
+
+    /**
+     * 復号済み平文鍵を返す。
+     *
+     * @return string|null 平文鍵（バイナリ）。未復号時はnull。
      */
     public function getPlainKey(): ?string
     {
@@ -29,39 +116,24 @@ class TR31KeyBlock
     }
 
     /**
-     * Returns the MAC length in bytes based on the version.
+     * 鍵ブロックを復号し、平文鍵を内部に保持する。
      *
-     * @param string $version The TR-31 key block version ('A', 'B', or 'D').
+     * @param string $keyBlock TR-31鍵ブロック（16進文字列）。
+     * @param string $kbpk KBPK（16進文字列）。
      *
-     * @return int The MAC length in bytes.
-     */
-    private function getMacLen(string $version): int
-    {
-        return $version === 'A' ? self::MAC_LEN_A : self::MAC_LEN_B;
-    }
-
-    /**
-     * Decrypts the TR-31 key block and extracts IPEK.
-     * MAC verification is performed only for version A.
-     *
-     * @param string $keyBlock The TR-31 key block in hexadecimal format.
-     * @param string $kbpk     The Key Block Public Key in hexadecimal format.
-     *
-     * @return bool True if IPEK extraction is successful, otherwise false.
+     * @return bool 復号成功時true、失敗時false。
      */
     public function decryptKeyBlock(string $keyBlock, string $kbpk): bool
     {
-        // Validate the key block format
-        // TR-31 key block version can be 'A', 'B', or 'D' (first character indicates version)
-        if ($keyBlock === '' || $kbpk === '' || !preg_match('/^[ABD]/', $keyBlock)) {
+        if ($keyBlock === '' || $kbpk === '' || !preg_match('/^[ABCD]/', $keyBlock)) {
             return false;
         }
 
-        $this->version = $keyBlock[0];
-        $macLen = $this->getMacLen($this->version);
-        $macLenHexChars = $macLen * 2; // バイト数を16進文字数に変換
+        if ($keyBlock[0] !== $this->getVersion() || !$this->isImplemented()) {
+            return false;
+        }
 
-        // 最小長の検証（ヘッダー + 最小鍵長 + MAC）
+        $macLenHexChars = $this->getMacLen() * 2;
         if (strlen($keyBlock) < self::HEADER_LEN + 16 + $macLenHexChars) {
             return false;
         }
@@ -70,42 +142,36 @@ class TR31KeyBlock
         $this->createKeySpec($kbpk);
 
         $keyString = substr($keyBlock, self::HEADER_LEN, strlen($keyBlock) - self::HEADER_LEN - $macLenHexChars);
-        $this->encryptedKey = hex2bin($keyString);
-        $this->mac = hex2bin(substr($keyBlock, strlen($keyBlock) - $macLenHexChars));
-
-        // Decrypt the key block. If decryption fails, return false.
-        $this->plainKey = $this->decryptKeyBlockInternal();
-        if ($this->plainKey === null) {
+        $encryptedKey = hex2bin($keyString);
+        $mac = hex2bin(substr($keyBlock, strlen($keyBlock) - $macLenHexChars));
+        if ($encryptedKey === false || $mac === false) {
             return false;
         }
 
-        // IPEK extraction succeeded (MAC verification is separate)
-        return true;
+        $this->encryptedKey = $encryptedKey;
+        $this->mac = $mac;
+
+        $this->plainKey = $this->decryptKeyBlockInternal();
+
+        return $this->plainKey !== null;
     }
 
     /**
-     * Returns the version of the TR-31 key block.
+     * 鍵ブロックのMACを検証する。
      *
-     * @return string The version character ('A', 'B', or 'D').
-     */
-    public function getVersion(): string
-    {
-        return $this->version;
-    }
-
-    /**
-     * Verifies the MAC for the TR-31 key block.
-     *
-     * @return bool|null True if MAC is valid, false if invalid, null if verification is not applicable (version D).
+     * @return bool|null true: 検証成功 / false: 検証失敗 / null: 検証対象外。
      */
     public function verifyMAC(): ?bool
     {
-        // バージョンDはMAC検証をサポートしていない
-        if ($this->version === 'D') {
+        if (!$this->supportsMacVerification()) {
             return null;
         }
 
-        $calculatedMAC = $this->calcMAC();
+        try {
+            $calculatedMAC = $this->calculateMacByVersion();
+        } catch (Exception $e) {
+            $calculatedMAC = null;
+        }
         if ($calculatedMAC === null) {
             return false;
         }
@@ -114,281 +180,44 @@ class TR31KeyBlock
     }
 
     /**
-     * Creates the Key Block Public Key (KBPK), Key Block Encryption Key (KBEK), and Key Block MAC Key (KBMK).
+     * KBPKから3DES用のKBPK/KBEK/KBMKを初期化する。
      *
-     * @param string $kbpk The Key Block Public Key in hexadecimal format.
+     * @param string $kbpk KBPK（16進文字列）。
      *
      * @return void
      */
     private function createKeySpec(string $kbpk): void
     {
-        $this->KBPK = $this->getTripleLengthKey(hex2bin($kbpk));
-
-        if ($this->version === 'A') {
-            // バージョンA: XORバリアント（E/M）
-            $kbpkBytes = $this->KBPK;
-
-            $kbekBytes = $kbpkBytes ^ $this->repeat(chr(0x45), strlen($kbpkBytes)); // 'E' == 0x45
-            $this->KBEK = $this->getTripleLengthKey($kbekBytes);
-
-            $kbmkBytes = $kbpkBytes ^ $this->repeat(chr(0x4D), strlen($kbpkBytes)); // 'M' == 0x4D
-            $this->KBMK = $this->getTripleLengthKey($kbmkBytes);
-        } else {
-            // バージョンB: TDES-CMAC KDF（固定入力8バイト×カウンタ2回 → 16バイト生成）
-            // KBEK: tdesCmac(kbpk, [0x01, 0, 0, 0, 0, 0, 0, 0x80]) + tdesCmac(kbpk, [0x02, 0, 0, 0, 0, 0, 0, 0x80])
-            $kbek1 = $this->tdesCmac($this->KBPK, pack('C*', 0x01, 0, 0, 0, 0, 0, 0, 0x80));
-            $kbek2 = $this->tdesCmac($this->KBPK, pack('C*', 0x02, 0, 0, 0, 0, 0, 0, 0x80));
-            $kbekBytes = $kbek1 . $kbek2;
-            $this->KBEK = $this->getTripleLengthKey($kbekBytes);
-
-            // KBMK: tdesCmac(kbpk, [0x01, 0, 0x01, 0, 0, 0, 0, 0x80]) + tdesCmac(kbpk, [0x02, 0, 0x01, 0, 0, 0, 0, 0x80])
-            $kbmk1 = $this->tdesCmac($this->KBPK, pack('C*', 0x01, 0, 0x01, 0, 0, 0, 0, 0x80));
-            $kbmk2 = $this->tdesCmac($this->KBPK, pack('C*', 0x02, 0, 0x01, 0, 0, 0, 0, 0x80));
-            $kbmkBytes = $kbmk1 . $kbmk2;
-            $this->KBMK = $this->getTripleLengthKey($kbmkBytes);
+        $kbpkBytes = hex2bin($kbpk);
+        if ($kbpkBytes === false) {
+            throw new InvalidArgumentException('Invalid KBPK hex string.');
         }
+
+        $this->KBPK = substr($kbpkBytes, 0, 16) . substr($kbpkBytes, 0, 8);
+        [$this->KBEK, $this->KBMK] = $this->deriveKeysByVersion($this->KBPK);
     }
 
     /**
-     * Decrypts the TR-31 key block using the KBEK.
+     * バージョン仕様のIVで暗号文本体を復号し、鍵長ヘッダから平文鍵を抽出する。
      *
-     * @return string|null The decrypted plain key or null if decryption fails.
+     * @return string|null 抽出した平文鍵（バイナリ）。失敗時はnull。
      */
     private function decryptKeyBlockInternal(): ?string
     {
         try {
-            // バージョンA: ヘッダーの最初の8バイトをIVとして使用
-            // バージョンB: 認証子（MAC等）のバイト列（8バイト）をIVとして使用
-            if ($this->version === 'A') {
-                $iv = substr($this->header, 0, 8);
-            } else {
-                // バージョンBの場合、MACの8バイトをIVとして使用
-                $iv = substr($this->mac, 0, 8);
-            }
+            $iv = $this->getDecryptIvByVersion($this->header, $this->mac);
 
             $cipher = openssl_decrypt($this->encryptedKey, self::TRANSFORMATION, $this->KBEK, OPENSSL_NO_PADDING, $iv);
             if ($cipher === false) {
                 return null;
             }
 
-            // 復号化された鍵ブロック全体を保存（バージョンBのMAC計算で使用）
             $this->plainKeyBlock = $cipher;
+            $keyBitsLength = hexdec(bin2hex(substr($cipher, 0, 2)));
 
-            $result = $cipher;
-            $keyBitsLength = hexdec(bin2hex(substr($result, 0, 2)));
-
-            return substr($result, 2, (int)($keyBitsLength / 8));
+            return substr($cipher, 2, (int) ($keyBitsLength / 8));
         } catch (Exception $e) {
             return null;
         }
-    }
-
-    /**
-     * Calculates the MAC for the TR-31 key block.
-     *
-     * @return string|null The calculated MAC or null if an error occurs.
-     */
-    private function calcMAC(): ?string
-    {
-        try {
-            if ($this->version === 'B') {
-                // バージョンB: header + plainKeyBlock をTDES-CMACで計算
-                if ($this->plainKeyBlock === null) {
-                    return null;
-                }
-                $data = $this->header . $this->plainKeyBlock;
-                return $this->tdesCmac($this->KBMK, $data);
-            } else {
-                // バージョンA: header + encryptedKey をCBC暗号化し、最後の8バイトからMAC長分を取得
-                $data = $this->header . $this->encryptedKey;
-                // データを8バイトの倍数にパディング
-                $paddedData = $this->padNoPadData($data);
-                $iv = str_repeat(chr(0), 8);
-                $cipher = openssl_encrypt($paddedData, self::TRANSFORMATION, $this->KBMK, OPENSSL_NO_PADDING, $iv);
-                if ($cipher === false) {
-                    return null;
-                }
-
-                $result = $cipher;
-                $macLen = $this->getMacLen($this->version);
-
-                // 最後の8バイトからMAC長分を取得
-                return substr($result, -8, $macLen);
-            }
-        } catch (Exception $e) {
-            return null;
-        }
-    }
-
-    /**
-     * Converts a key to a triple-length key.
-     *
-     * @param string $key The original key in binary format.
-     *
-     * @return string The triple-length key in binary format.
-     */
-    private function getTripleLengthKey(string $key): string
-    {
-        $tdesKey = substr($key, 0, 16) . substr($key, 0, 8);
-
-        return $tdesKey;
-    }
-
-    /**
-     * Repeats a string for a specified number of times.
-     *
-     * @param string $s The string to repeat.
-     * @param int    $n The number of times to repeat the string.
-     *
-     * @return string The repeated string.
-     */
-    private function repeat(string $s, int $n): string
-    {
-        return str_repeat($s, $n);
-    }
-
-    /**
-     * Calculates TDES-CMAC (Cipher-based Message Authentication Code).
-     *
-     * @param string $key The triple-length DES key in binary format.
-     * @param string $msg The message to authenticate.
-     *
-     * @return string The 8-byte CMAC result.
-     */
-    private function tdesCmac(string $key, string $msg): string
-    {
-        $blockSize = 8;
-
-        // Step 1: Compute L = E_K(0)
-        $zeroBlock = str_repeat(chr(0), $blockSize);
-        $L = openssl_encrypt($zeroBlock, 'DES-EDE3-ECB', $key, OPENSSL_NO_PADDING);
-        if ($L === false) {
-            return '';
-        }
-        $L = substr($L, 0, $blockSize);
-
-        // Step 2: Generate subkeys K1 and K2
-        $K1 = $this->generateSubkey($L);
-        $K2 = $this->generateSubkey($K1);
-
-        // Step 3: Process message blocks
-        $n = max(1, (int)ceil(strlen($msg) / $blockSize));
-        $lastComplete = (strlen($msg) > 0 && strlen($msg) % $blockSize === 0);
-
-        $X = str_repeat(chr(0), $blockSize);
-        for ($i = 0; $i < $n - 1; $i++) {
-            $m = substr($msg, $i * $blockSize, $blockSize);
-            $X = openssl_encrypt($this->xor($X, $m), 'DES-EDE3-ECB', $key, OPENSSL_NO_PADDING);
-            if ($X === false) {
-                return '';
-            }
-            $X = substr($X, 0, $blockSize);
-        }
-
-        // Step 4: Process last block
-        $last = '';
-        if ($lastComplete) {
-            $lastBlock = substr($msg, ($n - 1) * $blockSize, $blockSize);
-            $last = $this->xor($lastBlock, $K1);
-        } else {
-            $buf = str_repeat(chr(0), $blockSize);
-            if (strlen($msg) > 0) {
-                $rem = strlen($msg) % $blockSize;
-                $lastBlock = substr($msg, ($n - 1) * $blockSize, $rem);
-                for ($j = 0; $j < $rem; $j++) {
-                    $buf[$j] = $lastBlock[$j];
-                }
-                $buf[$rem] = chr(0x80);
-            } else {
-                $buf[0] = chr(0x80);
-            }
-            $last = $this->xor($buf, $K2);
-        }
-
-        // Step 5: Final encryption
-        $result = openssl_encrypt($this->xor($X, $last), 'DES-EDE3-ECB', $key, OPENSSL_NO_PADDING);
-        if ($result === false) {
-            return '';
-        }
-
-        return substr($result, 0, $blockSize);
-    }
-
-    /**
-     * Generates a subkey for CMAC.
-     *
-     * @param string $input The input block.
-     *
-     * @return string The generated subkey.
-     */
-    private function generateSubkey(string $input): string
-    {
-        $shifted = $this->leftShiftOneBit($input);
-        $Rb = pack('C*', 0, 0, 0, 0, 0, 0, 0, 0x1B);
-
-        // Check if MSB is set
-        if ((ord($input[0]) & 0x80) !== 0) {
-            return $this->xor($shifted, $Rb);
-        }
-
-        return $shifted;
-    }
-
-    /**
-     * Performs a left shift by one bit.
-     *
-     * @param string $input The input block.
-     *
-     * @return string The shifted block.
-     */
-    private function leftShiftOneBit(string $input): string
-    {
-        $out = '';
-        $carry = 0;
-        for ($i = strlen($input) - 1; $i >= 0; $i--) {
-            $b = ord($input[$i]) & 0xFF;
-            $v = ($b << 1) | $carry;
-            $out = chr($v & 0xFF) . $out;
-            $carry = ($v >> 8) & 0x01;
-        }
-
-        return $out;
-    }
-
-    /**
-     * Performs XOR operation on two byte arrays.
-     *
-     * @param string $a The first byte array.
-     * @param string $b The second byte array.
-     *
-     * @return string The XOR result.
-     */
-    private function xor(string $a, string $b): string
-    {
-        $out = '';
-        $len = strlen($a);
-        for ($i = 0; $i < $len; $i++) {
-            $out .= chr(ord($a[$i]) ^ ord($b[$i % strlen($b)]));
-        }
-
-        return $out;
-    }
-
-    /**
-     * Pads data to a multiple of 8 bytes (block size) for NoPadding mode.
-     *
-     * @param string $data The data to pad.
-     *
-     * @return string The padded data.
-     */
-    private function padNoPadData(string $data): string
-    {
-        $blockSize = 8;
-        $rem = strlen($data) % $blockSize;
-        if ($rem === 0) {
-            return $data;
-        }
-
-        return $data . str_repeat(chr(0), $blockSize - $rem);
     }
 }

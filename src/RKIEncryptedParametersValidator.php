@@ -1,5 +1,9 @@
 <?php
 
+namespace ExtractIpekFormattedTR31;
+
+use Exception;
+
 class RKIEncryptedParametersValidator
 {
     /**
@@ -40,7 +44,7 @@ class RKIEncryptedParametersValidator
             // 暗号化されたTMKを復号化
             // まずSHA-256で復号化を試みる
             $decryptedTmk = $this->decryptWithOAEP($encryptedTmk, $privateKey, 'sha256', $rsaPrivateKeyPem, $passphrase);
-            
+
             // SHA-256で失敗した場合、SHA-1で復号化を試みる（フォールバック）
             if ($decryptedTmk === false) {
                 $decryptedTmk = $this->decryptWithOAEP($encryptedTmk, $privateKey, 'sha1', $rsaPrivateKeyPem, $passphrase);
@@ -50,7 +54,7 @@ class RKIEncryptedParametersValidator
             }
 
             $decryptedTmkHex = bin2hex($decryptedTmk);
-            
+
             // HEX形式の場合、復号化結果に00008000プレフィックスが付いていない可能性がある
             // 00008000プレフィックスがない場合は追加する
             if ($format === 'hex' && !str_starts_with($decryptedTmkHex, '00008000')) {
@@ -83,7 +87,10 @@ class RKIEncryptedParametersValidator
 
             // Validation & Decrypt TR31 Key Block
             $kbpk = substr($tmkStr, 8);
-            $kb = new TR31KeyBlock();
+            $kb = TR31KeyBlock::createFromKeyBlock($tr31String);
+            if ($kb === null) {
+                return null;
+            }
 
             // キーブロックをTMKで復号化（MAC検証は分離）
             if ($kb->decryptKeyBlock($tr31String, $kbpk)) {
@@ -105,32 +112,10 @@ class RKIEncryptedParametersValidator
     }
 
     /**
-     * 検証したIPEK文字列を返却（後方互換性のため残す）
-     *
-     * @param string $rsaPrivateKeyPem   RSA秘密鍵のPEM形式文字列。TMKの復号化に使用。
-     * @param string $passphrase         暗号化秘密鍵のパスフレーズ。
-     * @param string $encryptedTMK        RSA公開鍵で暗号化されたTMK文字列（Base64またはHEX形式）
-     * @param string $tr31String         TR31文字列 RKIで使用するデータの場合にはA0072から始まる(0072の部分はLength)
-     * @param string $format             エンコード形式。'base64' または 'hex'（デフォルト: 'base64'）
-     *
-     * @return string|null IPEK文字列（後方互換性のため、IPEKのみ返却）
-     */
-    public function getIPEKWithValidation(string $rsaPrivateKeyPem, string $passphrase, string $encryptedTMK, string $tr31String, string $format = 'base64'): ?string
-    {
-        $tmkStr = $this->getDecryptedTMK($rsaPrivateKeyPem, $passphrase, $encryptedTMK, $format);
-        if ($tmkStr === null) {
-            return null;
-        }
-
-        $result = $this->getIPEKFromTMK($tmkStr, $tr31String);
-        return $result !== null ? $result['ipek'] : null;
-    }
-
-    /**
      * OAEPパディングモードで復号化
      *
      * @param string $encryptedData 暗号化されたデータ
-     * @param resource|OpenSSLAsymmetricKey $privateKey 秘密鍵リソース
+     * @param resource|\OpenSSLAsymmetricKey $privateKey 秘密鍵リソース
      * @param string $hashAlgorithm ハッシュアルゴリズム（'sha1' または 'sha256'）
      * @param string $rsaPrivateKeyPem RSA秘密鍵のPEM形式文字列
      * @param string $passphrase 暗号化秘密鍵のパスフレーズ
@@ -221,13 +206,5 @@ class RKIEncryptedParametersValidator
             @unlink($tempKeyFile);
             @unlink($tempDataFile);
         }
-    }
-
-    /**
-     * HEX STR -> Bytes
-     */
-    private function hexStringToBytes($str): false|string
-    {
-        return hex2bin($str);
     }
 }
