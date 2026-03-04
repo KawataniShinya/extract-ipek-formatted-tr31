@@ -49,7 +49,15 @@ if ($tmkStr === null) {
 echo "=== RESULT ===" . PHP_EOL;
 
 // 復号化されたTMKを出力
-echo "Decrypted TMK: $tmkStr (leading 00008000 indicates default string-to-key parameters)\n";
+if (str_starts_with($tmkStr, '00008000')) {
+    echo "Decrypted TMK: $tmkStr (leading 00008000 indicates default string-to-key parameters)\n";
+} else {
+    echo "Decrypted TMK: $tmkStr\n";
+}
+$tmkDecryptHashAlgorithm = $validator->getLastTmkDecryptHashAlgorithm();
+if ($tmkDecryptHashAlgorithm !== null) {
+    echo "TMK Decryption OAEP Hash: {$tmkDecryptHashAlgorithm}\n";
+}
 
 // IPEKを取得
 // TR-31鍵ブロックのプレフィックス"R"を除く（Rで始まる場合のみ）

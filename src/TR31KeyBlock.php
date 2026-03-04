@@ -106,6 +106,28 @@ abstract class TR31KeyBlock
     abstract protected function calculateMacByVersion(): ?string;
 
     /**
+     * バージョン仕様に応じてKBPKバイト列を正規化する。
+     *
+     * @param string $kbpkBytes KBPKバイナリ。
+     *
+     * @return string 派生処理に使用するKBPKバイナリ。
+     */
+    protected function normalizeKbpkByVersion(string $kbpkBytes): string
+    {
+        return substr($kbpkBytes, 0, 16) . substr($kbpkBytes, 0, 8);
+    }
+
+    /**
+     * バージョン仕様に応じた復号アルゴリズム文字列を返す。
+     *
+     * @return string OpenSSL暗号方式文字列。
+     */
+    protected function getDecryptTransformation(): string
+    {
+        return self::TRANSFORMATION;
+    }
+
+    /**
      * 復号済み平文鍵を返す。
      *
      * @return string|null 平文鍵（バイナリ）。未復号時はnull。
@@ -193,7 +215,7 @@ abstract class TR31KeyBlock
             throw new InvalidArgumentException('Invalid KBPK hex string.');
         }
 
-        $this->KBPK = substr($kbpkBytes, 0, 16) . substr($kbpkBytes, 0, 8);
+        $this->KBPK = $this->normalizeKbpkByVersion($kbpkBytes);
         [$this->KBEK, $this->KBMK] = $this->deriveKeysByVersion($this->KBPK);
     }
 
@@ -206,8 +228,8 @@ abstract class TR31KeyBlock
     {
         try {
             $iv = $this->getDecryptIvByVersion($this->header, $this->mac);
-
-            $cipher = openssl_decrypt($this->encryptedKey, self::TRANSFORMATION, $this->KBEK, OPENSSL_NO_PADDING, $iv);
+            $transformation = $this->getDecryptTransformation();
+            $cipher = openssl_decrypt($this->encryptedKey, $transformation, $this->KBEK, OPENSSL_NO_PADDING, $iv);
             if ($cipher === false) {
                 return null;
             }

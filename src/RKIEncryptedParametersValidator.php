@@ -6,6 +6,13 @@ use Exception;
 
 class RKIEncryptedParametersValidator
 {
+    private ?string $lastTmkDecryptHashAlgorithm = null;
+
+    public function getLastTmkDecryptHashAlgorithm(): ?string
+    {
+        return $this->lastTmkDecryptHashAlgorithm;
+    }
+
     /**
      * 復号化されたTMK文字列を返却
      *
@@ -19,6 +26,8 @@ class RKIEncryptedParametersValidator
     public function getDecryptedTMK(string $rsaPrivateKeyPem, string $passphrase, string $encryptedTMK, string $format = 'base64'): ?string
     {
         try {
+            $this->lastTmkDecryptHashAlgorithm = null;
+
             // RSA秘密鍵を取得
             $privateKey = openssl_get_privatekey($rsaPrivateKeyPem, $passphrase);
             if ($privateKey === false) {
@@ -44,6 +53,9 @@ class RKIEncryptedParametersValidator
             // 暗号化されたTMKを復号化
             // まずSHA-256で復号化を試みる
             $decryptedTmk = $this->decryptWithOAEP($encryptedTmk, $privateKey, 'sha256', $rsaPrivateKeyPem, $passphrase);
+            if ($decryptedTmk !== false) {
+                $this->lastTmkDecryptHashAlgorithm = 'SHA-256';
+            }
 
             // SHA-256で失敗した場合、SHA-1で復号化を試みる（フォールバック）
             if ($decryptedTmk === false) {
@@ -51,18 +63,12 @@ class RKIEncryptedParametersValidator
                 if ($decryptedTmk === false) {
                     throw new Exception('TMKの復号化に失敗しました（SHA-256とSHA-1の両方で失敗）。');
                 }
+                $this->lastTmkDecryptHashAlgorithm = 'SHA-1';
             }
 
-            $decryptedTmkHex = bin2hex($decryptedTmk);
-
-            // HEX形式の場合、復号化結果に00008000プレフィックスが付いていない可能性がある
-            // 00008000プレフィックスがない場合は追加する
-            if ($format === 'hex' && !str_starts_with($decryptedTmkHex, '00008000')) {
-                $decryptedTmkHex = '00008000' . $decryptedTmkHex;
-            }
-
-            return $decryptedTmkHex;
+            return bin2hex($decryptedTmk);
         } catch (Exception $ex) {
+            $this->lastTmkDecryptHashAlgorithm = null;
             error_log($ex->getMessage());
             return null;
         }
@@ -71,7 +77,7 @@ class RKIEncryptedParametersValidator
     /**
      * 復号化されたTMKからIPEK文字列を取得
      *
-     * @param string $tmkStr     復号化されたTMK（16進数文字列）。先頭の00008000はデフォルトのstring-to-keyパラメータ。
+     * @param string $tmkStr     復号化されたTMK（16進数文字列）。先頭00008000がある場合は除去してKBPKとして扱う。
      * @param string $tr31String TR31文字列 RKIで使用するデータの場合にはA0072から始まる(0072の部分はLength)
      *
      * @return array|null ['ipek' => string, 'macVerified' => bool|null, 'version' => string] 失敗時はnull。
@@ -80,13 +86,8 @@ class RKIEncryptedParametersValidator
     public function getIPEKFromTMK(string $tmkStr, string $tr31String): ?array
     {
         try {
-            // 文字列化TMKのValidation
-            if (!str_starts_with($tmkStr, '00008000')) { // Default string-to-key parameters
-                return null;
-            }
-
-            // Validation & Decrypt TR31 Key Block
-            $kbpk = substr($tmkStr, 8);
+            // TMK先頭のdefault string-to-key parameters(00008000)はあれば除去してKBPKとして扱う
+            $kbpk = str_starts_with($tmkStr, '00008000') ? substr($tmkStr, 8) : $tmkStr;
             $kb = TR31KeyBlock::createFromKeyBlock($tr31String);
             if ($kb === null) {
                 return null;
