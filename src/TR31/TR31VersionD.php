@@ -100,7 +100,7 @@ class TR31VersionD extends TR31KeyBlock
             return null;
         }
 
-        return $this->aesCmac($this->KBMK, $this->header . $this->plainKeyBlock);
+        return $this->aesCmac($this->KBMK, $this->getAuthenticatedDataPrefix() . $this->plainKeyBlock);
     }
 
     private function aesCmac(string $key, string $msg): string

@@ -50,7 +50,7 @@ class TR31VersionB extends TR31KeyBlock
             return null;
         }
 
-        return $this->tdesCmac($this->KBMK, $this->header . $this->plainKeyBlock);
+        return $this->tdesCmac($this->KBMK, $this->getAuthenticatedDataPrefix() . $this->plainKeyBlock);
     }
 
     protected function tdesCmac(string $key, string $msg): string

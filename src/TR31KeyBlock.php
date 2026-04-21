@@ -15,6 +15,7 @@ abstract class TR31KeyBlock
     private const TRANSFORMATION = 'DES-EDE3-CBC';
 
     protected string $header;
+    protected string $headerWithOptionalBlocks;
     protected string $encryptedKey;
     protected string $mac;
     protected ?string $plainKey = null;
@@ -161,11 +162,27 @@ abstract class TR31KeyBlock
         }
 
         $this->header = substr($keyBlock, 0, self::HEADER_LEN);
+        $optionalBlocksLen = $this->parseOptionalBlocksLen($keyBlock);
+        if ($optionalBlocksLen === null) {
+            return false;
+        }
+        $this->headerWithOptionalBlocks = substr($keyBlock, 0, self::HEADER_LEN + $optionalBlocksLen);
         $this->createKeySpec($kbpk);
 
-        $keyString = substr($keyBlock, self::HEADER_LEN, strlen($keyBlock) - self::HEADER_LEN - $macLenHexChars);
+        $encryptedKeyOffset = self::HEADER_LEN + $optionalBlocksLen;
+        $encryptedKeyLen = strlen($keyBlock) - $encryptedKeyOffset - $macLenHexChars;
+        if ($encryptedKeyLen <= 0 || ($encryptedKeyLen % 2) !== 0) {
+            return false;
+        }
+
+        $keyString = substr($keyBlock, $encryptedKeyOffset, $encryptedKeyLen);
+        $macString = substr($keyBlock, strlen($keyBlock) - $macLenHexChars);
+        if (!ctype_xdigit($keyString) || !ctype_xdigit($macString)) {
+            return false;
+        }
+
         $encryptedKey = hex2bin($keyString);
-        $mac = hex2bin(substr($keyBlock, strlen($keyBlock) - $macLenHexChars));
+        $mac = hex2bin($macString);
         if ($encryptedKey === false || $mac === false) {
             return false;
         }
@@ -176,6 +193,11 @@ abstract class TR31KeyBlock
         $this->plainKey = $this->decryptKeyBlockInternal();
 
         return $this->plainKey !== null;
+    }
+
+    protected function getAuthenticatedDataPrefix(): string
+    {
+        return $this->headerWithOptionalBlocks;
     }
 
     /**
@@ -217,6 +239,52 @@ abstract class TR31KeyBlock
 
         $this->KBPK = $this->normalizeKbpkByVersion($kbpkBytes);
         [$this->KBEK, $this->KBMK] = $this->deriveKeysByVersion($this->KBPK);
+    }
+
+    private function parseOptionalBlocksLen(string $keyBlock): ?int
+    {
+        if (strlen($keyBlock) < self::HEADER_LEN) {
+            return null;
+        }
+
+        $optionalBlocksCount = substr($keyBlock, 12, 2);
+        if (!ctype_digit($optionalBlocksCount)) {
+            return null;
+        }
+
+        $offset = self::HEADER_LEN;
+        for ($i = 0; $i < (int) $optionalBlocksCount; $i++) {
+            if (strlen($keyBlock) < $offset + 4) {
+                return null;
+            }
+
+            $blockLenHex = substr($keyBlock, $offset + 2, 2);
+            if (!ctype_xdigit($blockLenHex)) {
+                return null;
+            }
+
+            $blockLen = hexdec($blockLenHex);
+            if ($blockLen === 0) {
+                if (strlen($keyBlock) < $offset + 10) {
+                    return null;
+                }
+
+                $extendedBlockLenHex = substr($keyBlock, $offset + 4, 4);
+                if (!ctype_xdigit($extendedBlockLenHex)) {
+                    return null;
+                }
+
+                $blockLen = hexdec($extendedBlockLenHex);
+            }
+
+            if ($blockLen < 4 || strlen($keyBlock) < $offset + $blockLen) {
+                return null;
+            }
+
+            $offset += $blockLen;
+        }
+
+        return $offset - self::HEADER_LEN;
     }
 
     /**

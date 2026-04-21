@@ -44,7 +44,7 @@ class TR31VersionA extends TR31KeyBlock
 
     protected function calculateMacByVersion(): ?string
     {
-        $data = $this->header . $this->encryptedKey;
+        $data = $this->getAuthenticatedDataPrefix() . $this->encryptedKey;
         $paddedData = $this->padNoPadData($data);
         $cipher = $this->encryptCbcNoPadding($paddedData, $this->KBMK, str_repeat(chr(0), 8));
         if ($cipher === false) {
